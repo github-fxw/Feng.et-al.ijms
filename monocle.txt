@@ -1,0 +1,85 @@
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(data.table)
+Sys.setenv(LANGUAGE = "en")
+setwd("H:/fxw.scrna.data/ad.data.from.tianhe/")
+load("s.neuron.rdata")
+table(s.neuron@meta.data$Diagnosis)
+DimPlot(s.neuron, reduction = "umap",label =T,group.by = "Cell.Type") 
+DimPlot(s.neuron, reduction = "umap",label =T,group.by = "Diagnosis")
+
+VlnPlot(s.neuron, features = c("CLEC4G"),,group.by='Cell.Type',split.by = "Diagnosis", log = TRUE)
+x1=subset(s.neuron,CLEC4G>0)
+DimPlot(x1, reduction = "umap",label =T,group.by = "Cell.Type") 
+DimPlot(x1, reduction = "umap",label =T,group.by = "Diagnosis")
+
+VlnPlot(x1, features = c("CLEC4G"),,group.by='Cell.Type',split.by = "Diagnosis", log = TRUE)
+save(x1,file= "EXandINHinADandCON.clec4g.positive.rdata")
+
+table(x1@meta.data$Cell.Type)
+s.ex.clec4g=subset(x1@meta.data,Cell.Type=="EX")
+s.ex.clec4g=x1[,c(rownames(s.ex.clec4g))]
+DimPlot(s.ex.clec4g, reduction = "umap",label =T,group.by = "Cell.Type") 
+DimPlot(s.ex.clec4g, reduction = "umap",label =T,group.by = "Diagnosis")
+save(s.ex.clec4g,file="s.ex.clec4g.rdata")
+
+s.INH.clec4g=subset(x1@meta.data,Cell.Type=="INH")
+s.INH.clec4g=x1[,c(rownames(s.INH.clec4g))]
+DimPlot(s.INH.clec4g, reduction = "umap",label =T,group.by = "Cell.Type") 
+DimPlot(s.INH.clec4g, reduction = "umap",label =T,group.by = "Diagnosis")
+save(s.INH.clec4g,file="s.INH.clec4g.rdata")
+
+library(monocle)
+#用所有clec4g>0的神经元做monocle2
+data <- as(as.matrix(x1@assays$RNA@counts), 'sparseMatrix')
+pd <- new('AnnotatedDataFrame', data = x1@meta.data)
+fData <- data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+fd <- new('AnnotatedDataFrame', data = fData)
+monocle_cds <- newCellDataSet(data,
+                              phenoData = pd,
+                              featureData = fd,
+                              lowerDetectionLimit = 0.5,
+                              expressionFamily = negbinomial.size())
+
+monocle_cds <- estimateSizeFactors(monocle_cds)
+monocle_cds <- estimateDispersions(monocle_cds)
+
+HSMM=monocle_cds
+disp_table <- dispersionTable(HSMM)
+unsup_clustering_genes <- subset(disp_table, mean_expression >= 0.1)
+HSMM <- setOrderingFilter(HSMM, unsup_clustering_genes$gene_id)
+plot_ordering_genes(HSMM)
+
+
+disp_table <- dispersionTable(HSMM)
+disp.genes <- subset(disp_table, mean_expression >= 0.1 & dispersion_empirical >= 1 * dispersion_fit)$gene_id
+HSMM <- setOrderingFilter(HSMM, disp.genes)
+plot_ordering_genes(HSMM)
+
+
+HSMM <- reduceDimension(HSMM, max_components = 2,
+                        method = 'DDRTree')
+
+
+HSMM <- orderCells(HSMM)
+plot_cell_trajectory(HSMM, color_by = "Diagnosis")
+
+plot_cell_trajectory(HSMM, color_by = "State")
+plot_cell_trajectory(HSMM, color_by = "Pseudotime")
+
+plot_cell_trajectory(HSMM, color_by = "State") +
+  facet_wrap(~State, nrow = 1)
+
+
+to_be_tested <- row.names(subset(fData(HSMM),
+                                 gene_short_name %in% c("CLEC4G","APOE","PSEN1","PSEN2","APP","MAPT")))
+cds_subset <- HSMM[to_be_tested,]
+
+diff_test_res <- differentialGeneTest(cds_subset,
+                                      fullModelFormulaStr = "~sm.ns(Pseudotime)")
+
+diff_test_res[,c("gene_short_name", "pval", "qval")]
+plot_genes_in_pseudotime(cds_subset, color_by ="State")
+
